@@ -1,0 +1,183 @@
+---
+title: "Basal Area"
+format: html
+editor: visual
+---
+
+```{r}
+pkg <- c("lme4", "lmerTest", "emmeans", "rstatix", "dplyr", 
+                       "ggplot2", "readxl", "boot", "car", "MASS", "ggpubr",
+                       "patchwork", "gridExtra", "performance", "tidyverse", "patchwork")
+
+new_pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+if (length(new_pkg)) install.packages(new_pkg)
+lapply(pkg, library, character.only = TRUE)
+```
+
+```{r}
+TDBH <- readxl::read_excel("DBH_Data.xlsx", sheet = "DBH")
+
+TDBH <- TDBH %>%
+  rename(DBH_cm = TreeSizes) %>% 
+  mutate(
+    Plot = as.factor(Plot),
+    Location = as.factor(Location),
+    Plot = factor(Plot, levels = c("1", "2", "3"), labels = c("Edge", "Transition", "Interior"))
+  )
+
+plot_area_sqm <- 202.34
+
+TDBH_BA_calculated <- TDBH %>%
+  mutate(
+    BA_tree_sqm = (pi / 4) * (DBH_cm / 100)^2
+  )
+
+BasalArea_Plot <- TDBH_BA_calculated %>%
+  group_by(Location, Plot) %>%
+  summarise(
+    Total_BA_sqm = sum(BA_tree_sqm),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+
+    BA_ha = Total_BA_sqm * (10000 / plot_area_sqm)
+  )
+
+BasalArea_Plot <- BasalArea_Plot %>%
+  mutate(
+    log_BA_ha = log(BA_ha)
+  )
+
+ba_lmm <- lmer(log_BA_ha ~ Plot + (1 | Location), data = BasalArea_Plot)
+
+ba_lmm_raw <- lmer(BA_ha ~ Plot + (1 | Location), data = BasalArea_Plot)
+```
+
+```{r}
+raw_color <- "#F8766D" 
+log_color <- "#00BFC4"
+trend_color <- "darkblue" 
+
+hist_raw <- ggplot(data.frame(res = residuals(ba_lmm_raw)), aes(x = res)) +
+  geom_histogram(binwidth = 5, fill = raw_color, color = "black") +
+  labs(title = "A) Raw Basal Area Residuals (Histogram)",
+       x = "Residuals (m²/ha)", y = "Frequency") +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+print(hist_raw)
+
+qq_raw <- ggplot(data.frame(res = residuals(ba_lmm_raw)), aes(sample = res)) +
+  stat_qq(color = raw_color) + 
+  stat_qq_line(color = trend_color, linewidth = 0.8) +
+  labs(title = "B) Raw Basal Area Residuals (Q-Q Plot)",
+       x = "Theoretical Quantiles", y = "Sample Quantiles") +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+print(qq_raw)
+
+res_fit_raw <- ggplot(data.frame(
+    Fitted = fitted(ba_lmm_raw),
+    Residuals = residuals(ba_lmm_raw)
+  ), aes(x = Fitted, y = Residuals)) +
+  geom_point(alpha = 0.7, color = raw_color) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(method = "loess", se = FALSE, color = trend_color, linewidth = 0.5) +
+  labs(title = "C) Raw Residuals vs. Fitted Values",
+       x = "Fitted Values (Raw BA/ha)", y = "Residuals") +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+print(res_fit_raw)
+
+hist_log <- ggplot(data.frame(res = residuals(ba_lmm)), aes(x = res)) +
+  geom_histogram(binwidth = 0.2, fill = log_color, color = "black") +
+  labs(title = "D) Log-Transformed Basal Area Residuals (Histogram)",
+       x = "Residuals (log(m²/ha))", y = "Frequency") +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+print(hist_log)
+
+qq_log <- ggplot(data.frame(res = residuals(ba_lmm)), aes(sample = res)) +
+  stat_qq(color = log_color) + 
+  stat_qq_line(color = trend_color, linewidth = 0.8) +
+  labs(title = "E) Log-Transformed Basal Area Residuals (Q-Q Plot)",
+       x = "Theoretical Quantiles", y = "Sample Quantiles") +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+print(qq_log)
+
+res_fit_log <- ggplot(data.frame(
+    Fitted = fitted(ba_lmm),
+    Residuals = residuals(ba_lmm)
+  ), aes(x = Fitted, y = Residuals)) +
+  geom_point(alpha = 0.7, color = log_color) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(method = "loess", se = FALSE, color = trend_color, linewidth = 0.5) +
+  labs(title = "F) Log-Transformed Residuals vs. Fitted Values",
+       x = "Fitted Values (log(BA/ha))", y = "Residuals") +
+  theme_bw(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+print(res_fit_log)
+```
+
+```{r}
+print(anova(ba_lmm))
+
+emm_comparison_ba <- pairs(emmeans(ba_lmm, ~ Plot), adjust = "Tukey")
+print(emm_comparison_ba)
+```
+
+```{r}
+ba_lmm <- lmer(log_BA_ha ~ Plot + (1 | Location), data = BasalArea_Plot)
+dbhlmm <- lmer(log(DBH_cm) ~ Plot + (1 | Location), data = TDBH)
+
+emm_ba <- emmeans(ba_lmm, ~ Plot)
+summary(emm_ba, type = "response")                   
+pairwise_ba <- contrast(emm_ba, method = "pairwise", adjust = "tukey")
+summary(pairwise_ba, infer = TRUE, type = "response") # ratios & CIs
+
+emm_dbh <- emmeans(dbhlmm, ~ Plot)
+summary(emm_dbh, type = "response")                 
+summary(contrast(emm_dbh, method="pairwise", adjust="tukey"),
+        infer = TRUE, type = "response")
+```
+
+```{r}
+em_log_ba <- emmeans(ba_lmm, ~ Plot)
+
+em_df_log_ba <- as.data.frame(em_log_ba)
+
+print(em_df_log_ba)
+
+p_log_ba <- ggplot(em_df_log_ba, aes(x = Plot, y = emmean)) +
+  geom_point(aes(color = Plot), size = 4) +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL, color = Plot), width = 0.1, linewidth = 1) +
+  labs(y = expression("EMM log[Basal~Area~(m"^2*"/ha)]"),
+       x = "Plot Type",
+       title = "Estimated Marginal Means (log scale)") +
+  scale_color_manual(values = c("Edge" = "#E69F00", "Transition" = "#56B4E9", "Interior" = "#009E73")) +
+  theme_bw(base_size = 14) +
+  theme(legend.position = "none", plot.title = element_text(face = "bold", hjust = 0.5))
+
+print(p_log_ba)
+
+em_df_bt_ba <- em_df_log_ba %>%
+  mutate(
+    EMM_BA_ha = exp(emmean),
+    lower_CI = exp(lower.CL),
+    upper_CI = exp(upper.CL)
+  )
+
+print(em_df_bt_ba)
+
+pbt_ba <- ggplot(em_df_bt_ba, aes(x = Plot, y = EMM_BA_ha)) +
+  geom_point(aes(color = Plot), size = 4) +
+  geom_errorbar(aes(ymin = lower_CI, ymax = upper_CI, color = Plot), width = 0.1, linewidth = 1) +
+  labs(y = expression("EMM Basal Area ("*m^2*"/ha - Geom. Mean)"),
+       x = "Plot Type",
+       title = "Estimated Marginal Means of Basal Area (m²/ha)") +
+  scale_color_manual(values = c("Edge" = "#E69F00", "Transition" = "#56B4E9", "Interior" = "#009E73")) +
+  theme_bw(base_size = 14) +
+  theme(legend.position = "none", plot.title = element_text(face = "bold", hjust = 0.5))
+
+print(pbt_ba)
+```

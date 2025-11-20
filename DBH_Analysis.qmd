@@ -1,0 +1,225 @@
+---
+title: "DBH Analysis"
+format: html
+editor: visual
+---
+
+```{r}
+pkg <- c("lme4", "lmerTest", "emmeans", "rstatix", "dplyr", 
+                       "ggplot2", "readxl", "boot", "car", "MASS", "ggpubr",
+                       "patchwork", "gridExtra", "performance", "tidyverse")
+
+new_pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+if (length(new_pkg)) install.packages(new_pkg)
+lapply(pkg, library, character.only = TRUE)
+```
+
+$$
+\text{lmer}\big(\log(\text{DBH}) \sim \text{Plot} + (1 \mid \text{Location}),\ \text{data} = \text{dbh\data}\big)
+$$
+
+$$
+\log(\text{DBH}_{ijk}) = \beta_0 + \beta_{1j} + u_k + \epsilon_{ijk}
+$$
+
+with
+
+$$
+u_k \sim N(0, \sigma_u^2), \quad \epsilon_{ijk} \sim N(0, \sigma_\epsilon^2)
+$$
+
+where:
+
+$\log(\text{TreeSize}_{ijk})$ = log-transformed DBH (dependent variable)\
+$\beta_0$ = fixed intercept (mean log-tree size for the reference Plot category, here “Edge”)\
+$\beta_{1j}$ = fixed effect of Plot $j$ (differences for “Transition” and “Interior” compared to “Edge”)\
+$u_k \sim N(0, \sigma_{\text{Location}}^2)$ = random intercept for Location, capturing variability among locations\
+$\epsilon_{ijk} \sim N(0, \sigma^2)$ = residual error for individual trees
+
+$i$: individual tree
+
+$j$: plot (fixed effect)
+
+$k$: location (random effect)
+
+```{r}
+TDBH <- readxl::read_excel("TreeDBHAnalysisDATAcap.xlsx")
+
+TDBH$Plot <- as.factor(TDBH$Plot)
+TDBH$Location <- as.factor(TDBH$Location)
+
+TDBH$log_tree_sizes <- log(TDBH$`TreeSizes`)
+```
+
+```{r}
+lmm_log <- lmer(log_tree_sizes ~ Plot + (1 | Location), data = TDBH)
+
+summary(lmm_log)
+
+anova(lmm_log)
+
+em_log <- emmeans(lmm_log, ~ Plot)
+
+print(em_log)
+
+emm_comparison <- pairs(em_log, adjust = "Tukey")
+
+print(emm_comparison)
+
+em_dbhcms <- emmeans(lmm_log, ~ Plot, type = "response")
+
+print(em_dbhcms)
+
+
+
+lmm_log <- lmer(log_tree_sizes ~ Plot + (1 | Location), data = TDBH)
+
+summary(lmm_log)
+
+anova(lmm_log)
+
+em <- emmeans(lmm_log, ~ Plot)
+
+emm_comparison <- pairs(em, adjust = "Tukey")
+
+print(emm_comparison)
+
+em_df <- as.data.frame(em)
+
+check_model(lmm_log)
+```
+
+```{r}
+ranef_df_log <- ranef(lmm_log)$Location %>%
+  tibble::rownames_to_column(var = "Location") %>%
+  rename(Intercept = `(Intercept)`) %>%
+  mutate(
+    location_var_log = VarCorr(lmm_log) %>% as.data.frame() %>% filter(grp == "Location") %>% pull(vcov),
+    location_sd_log = sqrt(location_var_log),
+    lower_ci = Intercept - 1.96 * location_sd_log,
+    upper_ci = Intercept + 1.96 * location_sd_log
+  )
+
+caterpillar_plot_log <- ggplot(ranef_df_log, aes(x = reorder(Location, Intercept), y = Intercept)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 0.5) +
+  geom_point(size = 3, color = "#00BFC4") +
+  geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.2) +
+  coord_flip() +
+  labs(x = "Location (Site)",
+       y = expression("Intercept Estimate ("*log[e]*"(DBH))")) +
+  theme_bw(base_size = 12)
+
+print(caterpillar_plot_log)
+print(emm_comparison)
+```
+
+```{r}
+custom_colors <- c("1" = "#E69F00", "2" = "#56B4E9", "3" = "#009E73")
+
+em <- emmeans(lmm_log, ~ Plot)
+em_df <- as.data.frame(em)
+em_df$Plot <- factor(em_df$Plot, levels = c("1","2","3"))
+
+emmlog <- ggplot(em_df, aes(x = Plot, y = emmean)) +
+  geom_point(aes(color = Plot), size = 3) +
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL, color = Plot), 
+                width = 0.1) +
+  labs(y = expression("Estimated marginal mean (" * log[e] * " DBH)"),
+       x = "Plot",
+       title = "A) Log-Transformed EMMs") +
+  theme_bw() +
+  scale_color_manual(values = custom_colors) +
+  coord_cartesian(ylim = c(2.2, 3.0)) 
+
+print(emmlog)
+
+custom_colors <- c("1" = "#E69F00", "2" = "#56B4E9", "3" = "#009E73")
+
+em <- emmeans(lmm_log, ~ Plot)
+em_df <- as.data.frame(em)
+em_df$Plot <- factor(em_df$Plot, levels = c("1","2","3"))
+
+em_df_bt <- em_df
+em_df_bt$emmean_bt <- exp(em_df_bt$emmean)
+em_df_bt$lower_bt <- exp(em_df_bt$lower.CL)
+em_df_bt$upper_bt <- exp(em_df_bt$upper.CL)
+
+emmbt <- ggplot(em_df_bt, aes(x = Plot, y = emmean_bt)) +
+  geom_point(aes(color = Plot), size = 3) +
+  geom_errorbar(aes(ymin = lower_bt, ymax = upper_bt, color = Plot), 
+                width = 0.1) +
+  labs(y = "Estimated marginal mean DBH (cm)",
+       x = "Plot",
+       title = "B) Back-Transformed EMMs (cm)") +
+  theme_bw() +
+  scale_color_manual(values = custom_colors) +
+  coord_cartesian(ylim = c(9, 21)) +
+  guides(color = guide_legend(title = "Plot"))
+
+print(emmbt)
+
+```
+
+```{r}
+lmm_untrans <- lmer(`TreeSizes` ~ Plot + (1 | Location), data = TDBH)
+
+hist1 <- ggplot(data.frame(res = residuals(lmm_untrans)), aes(x = res)) +
+  geom_histogram(binwidth = 10, fill = "#F8766D", color = "black") +
+  labs(title = "A) Untransformed LMM Residuals",
+       x = "Residuals", y = "Frequency") +
+  theme_bw(base_size = 12)
+print(hist1)
+
+qq1 <- ggplot(data.frame(res = residuals(lmm_untrans)), aes(sample = res)) +
+  stat_qq() + 
+  stat_qq_line() +
+  labs(title = "B) Untransformed LMM Residuals (Q-Q)",
+       x = "Theoretical Quantiles", y = "Sample Quantiles") +
+  theme_bw(base_size = 12)
+print(qq1)
+
+res_fit1 <- ggplot(data.frame(
+    Fitted = fitted(lmm_untrans),
+    Residuals = residuals(lmm_untrans)
+  ), aes(x = Fitted, y = Residuals)) +
+  geom_point(alpha = 0.6, color = "#F8766D") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(method = "loess", se = FALSE, color = "darkblue", linewidth = 0.8) +
+  labs(title = "C) Untransformed LMM Residuals vs. Fitted Values",
+       x = "Fitted Values (DBH)",
+       y = "Residuals") +
+  theme_bw(base_size = 12)
+print(res_fit1)
+```
+
+```{r}
+lmm_log <- lmer(log(`TreeSizes`) ~ Plot + (1 | Location), data = TDBH)
+
+hist2 <- ggplot(data.frame(res = residuals(lmm_log)), aes(x = res)) +
+  geom_histogram(binwidth = 0.1, fill = "#00BFC4", color = "black") +
+  labs(title = "A) Log-LMM Residuals",
+       x = "Residuals", y = "Frequency") +
+  theme_bw(base_size = 12)
+print(hist2)
+
+qq2 <- ggplot(data.frame(res = residuals(lmm_log)), aes(sample = res)) +
+  stat_qq() + 
+  stat_qq_line() +
+  labs(title = "B) Log-LMM Residuals (Q-Q)",
+       x = "Theoretical Quantiles", y = "Sample Quantiles") +
+  theme_bw(base_size = 12)
+print(qq2)
+
+res_fit2 <- ggplot(data.frame(
+    Fitted = fitted(lmm_log),
+    Residuals = residuals(lmm_log)
+  ), aes(x = Fitted, y = Residuals)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  geom_smooth(method = "loess", se = FALSE, color = "blue", linewidth = 0.5) +
+  labs(title = "C) Log-LMM Residuals vs. Fitted Values",
+       x = "Fitted Values (ln(DBH))", 
+       y = "Residuals") +
+  theme_bw(base_size = 12)
+print(res_fit2)
+```
