@@ -44,7 +44,7 @@ root/
     ├── Supplement (DOCX)
     └── Data Overview / Primer (DOCX)
 
-📊 Dataset Descriptions
+Dataset Descriptions
 CenterPoints.csv
 
 Plot-level metadata, including GPS coordinates (Garmin GPSMAP 67i, ±1.8–3 m), elevation (NAVD88), and field notes.
