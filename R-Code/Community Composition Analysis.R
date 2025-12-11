@@ -401,3 +401,6 @@ ggplot(combined_df, aes(x = mean_DBH, y = mean_density_ha)) +
     axis.text = element_text(size = 12)
   )
 
+## For the Zone based NMDS for the supplement
+
+
