@@ -401,6 +401,92 @@ ggplot(combined_df, aes(x = mean_DBH, y = mean_density_ha)) +
     axis.text = element_text(size = 12)
   )
 
-## For the Zone based NMDS for the supplement
+## For the Zone based NMDS for the supplement (edge, transition, interior NMDS)
 
+file_path <- "TreeCompCap.xlsx"
+rbio <- read_excel(file_path, sheet = 1)
+
+species_cols <- c(
+  "Black gum", "Red Maple", "White oak", "Scarlet oak",
+  "Northern Red Oak", "Sassafras", "Pitch Pine",
+  "Black Cherry", "Black Oak", "Post Oak",
+  "Pignut Hickory", "Eastern red cedar", "American holly"
+)
+
+species_data <- rbio[, species_cols]
+
+env_data <- rbio[, c("Location", "Plot")]
+env_data$Plot <- factor(env_data$Plot)
+
+env_data$Zone <- factor(env_data$Plot,
+                        levels = c("1", "2", "3"),
+                        labels = c("edge", "transition", "interior"))
+
+env_data$Location <- factor(
+  env_data$Location,
+  levels = c(
+    "Gardiner County Park",
+    "Seatuck",
+    "Ludlow Creek",
+    "Wertheim",
+    "Haven Point",
+    "Pine Neck",
+    "Shinnecock Reservation"
+  )
+)
+
+set.seed(42)
+nmds <- metaMDS(species_data,
+                distance = "bray",
+                k = 2,
+                trymax = 200,
+                autotransform = FALSE,
+                wascores = FALSE,
+                trace = FALSE)
+
+scores_df <- as.data.frame(scores(nmds))
+plot_df <- cbind(scores_df, env_data)
+
+zone_hulls <- plot_df %>%
+  group_by(Zone) %>%
+  slice(chull(NMDS1, NMDS2)) %>%
+  ungroup()
+
+loc_colors <- c(
+  "Gardiner County Park"      = "#FDE725",
+  "Seatuck"                   = "#FCD12A",
+  "Ludlow Creek"              = "#FA8072",
+  "Wertheim"                  = "#F781BF",
+  "Haven Point"               = "#A65628",
+  "Pine Neck"                 = "#7570B3",
+  "Shinnecock Reservation"    = "#1F78B4"
+)
+
+zone_colors <- c(
+  "edge"        = "#E69F00",
+  "transition"  = "#56B4E9",
+  "interior"    = "#009E73"
+)
+
+p_zone <- ggplot(plot_df, aes(NMDS1, NMDS2)) +
+  geom_polygon(data = zone_hulls,
+               aes(fill = Zone, group = Zone),
+               alpha = 0.25, color = NA) +
+  geom_point(aes(color = Location,
+                 shape = Location),
+             size = 4) +
+  scale_color_manual(values = loc_colors) +
+  scale_fill_manual(values = zone_colors) +
+  scale_shape_manual(values = c(16, 17, 15, 3, 4, 8, 7)) +
+  labs(
+    title = "NMDS of Tree Communities by Zone",
+    x = "NMDS1", y = "NMDS2"
+  ) +
+  theme_bw(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+p_zone
 
